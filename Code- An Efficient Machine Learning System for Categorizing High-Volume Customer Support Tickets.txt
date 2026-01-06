@@ -1,0 +1,1044 @@
+An Efficient Machine Learning System for Categorizing High-Volume Customer Support Tickets
+
+1_Datapreprocessing and Visualization
+
+!pip install datasets --quiet
+
+from datasets import load_dataset as Cus_tkt_load_dataset
+
+#  LOAD DATASET FROM HUGGINGFACE
+
+Cus_tkt_rawdata = Cus_tkt_load_dataset("Tobi-Bueck/customer-support-tickets")
+Cus_tkt_dframe = Cus_tkt_rawdata["train"].to_pandas()
+Cus_tkt_dframe.head()
+
+Cus_tkt_dframe.shape
+
+Cus_tkt_dframe.columns
+
+Cus_tkt_dframe['type'].value_counts(dropna=False)
+
+Cus_tkt_dframe.info()
+
+"""Preprocessing"""
+
+# Removing rows with missing target labels
+Cus_tkt_dframe = Cus_tkt_dframe.dropna(subset=["type"])
+
+Cus_tkt_dframe['type'].value_counts(dropna=False)
+
+Cus_tkt_dframe.shape
+
+Cus_tkt_dframe["subject"] = Cus_tkt_dframe["subject"].fillna("")
+Cus_tkt_dframe["body"] = Cus_tkt_dframe["body"].fillna("")
+
+# Checking for any duplicates
+print("Duplicates:", Cus_tkt_dframe.duplicated().any())
+
+# Merge subject and body into a single column
+Cus_tkt_dframe["text"] = Cus_tkt_dframe["subject"] + " " + Cus_tkt_dframe["body"]
+
+Cus_tkt_dframe["text"].head()
+
+import matplotlib.pyplot as Cus_tkt_plt
+import seaborn as Cus_tkt_sns
+
+# ---- Target Distribution ----
+Cus_tkt_plt.figure(figsize=(8,5))
+Cus_tkt_sns.countplot(x=Cus_tkt_dframe["type"])
+Cus_tkt_plt.title("Customer Ticket Type Distribution")
+Cus_tkt_plt.xticks(rotation=45)
+Cus_tkt_plt.show()
+
+# ---- language Distribution ----
+Cus_tkt_plt.figure(figsize=(6,4))
+Cus_tkt_sns.countplot(x=Cus_tkt_dframe["language"], color='lightgreen')
+Cus_tkt_plt.title("Types of languages")
+Cus_tkt_plt.xticks(rotation=45)
+Cus_tkt_plt.show()
+
+#view german language tickets
+for index in Cus_tkt_dframe[Cus_tkt_dframe["language"] == "de"].index[:100]:
+    display(Cus_tkt_dframe.loc[index, "text"])
+
+#view english language tickets
+for index in Cus_tkt_dframe[Cus_tkt_dframe["language"] == "en"].index[:100]:
+    display(Cus_tkt_dframe.loc[index, "text"])
+
+Cus_tkt_dframe_final = Cus_tkt_dframe[["text", "type", "language"]].copy()
+Cus_tkt_dframe_final
+
+Cus_tkt_dframe_final['language'].value_counts()
+
+# Keep only rows where language is 'en'
+Cus_tkt_dframe_final = Cus_tkt_dframe_final[Cus_tkt_dframe_final['language'] == 'en'].copy()
+Cus_tkt_dframe_final.reset_index(drop=True, inplace=True)
+
+Cus_tkt_dframe_final.shape
+
+from sklearn.preprocessing import LabelEncoder as Cus_tkt_Lenc
+
+cus_tkt_enc = Cus_tkt_Lenc()
+Cus_tkt_dframe_final["type"] = cus_tkt_enc.fit_transform(Cus_tkt_dframe_final["type"])
+Cus_tkt_dframe_final['type'].value_counts()
+
+Cus_tkt_dframe_final.drop(columns=['language'], inplace=True)
+Cus_tkt_dframe_final.columns
+
+Cus_tkt_dframe_final.to_csv('/cus_tkt_cleaned.csv', index=False)
+
+________________________________________
+
+2_Word2Vec embeddings
+
+import pandas as Cus_tkt_pd
+
+Cus_tkt_input_path = "/cus_tkt_cleaned.csv"
+
+Cus_tkt_dframe_final = Cus_tkt_pd.read_csv(Cus_tkt_input_path)
+print("dataframe shape:", Cus_tkt_dframe_final.shape)
+print("Columns:", Cus_tkt_dframe_final.columns.tolist())
+
+print("\nClass distribution:")
+print(Cus_tkt_dframe_final["type"].value_counts())
+
+"""Text Cleaning"""
+
+# Clean spaces
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].str.strip().replace(r'\s+', ' ', regex=True)
+
+import re as Cus_tkt_re
+
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].apply(lambda x: Cus_tkt_re.sub(r'[^a-zA-Z\s]', '', x))
+
+# Lowercase text
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].str.lower()
+
+import nltk
+from nltk.corpus import stopwords
+nltk.download("punkt")
+nltk.download('stopwords')
+nltk.download('punkt_tab')
+from nltk.tokenize import word_tokenize as Cus_tkt_word_tokn
+from nltk.corpus import stopwords as Cus_tkt_stopwords_corpus
+
+# Tokenize
+Cus_tkt_dframe_final["tokens"] = Cus_tkt_dframe_final["text"].apply(Cus_tkt_word_tokn)
+
+stop_words_en = set(stopwords.words('english'))
+
+Cus_tkt_dframe_final["tokens"] = Cus_tkt_dframe_final["tokens"].apply(lambda tokens: [w for w in tokens if w not in stop_words_en])
+
+Cus_tkt_dframe_final
+
+!pip install gensim --quiet
+
+from sklearn.model_selection import train_test_split as cus_tkt_split
+
+# ipnput and output
+cus_X_feat_tkt = Cus_tkt_dframe_final["tokens"]
+cus_Y_out_tkt = Cus_tkt_dframe_final["type"]
+
+# 80% train, 20% test
+cus_Xin_tran, cus_Xin_tst, cus_Yin_tran, cus_Yin_tst = cus_tkt_split(cus_X_feat_tkt, cus_Y_out_tkt, test_size=0.2, random_state=42, stratify=cus_Y_out_tkt)
+print("Train shape:", cus_Xin_tran.shape, "Test shape:", cus_Xin_tst.shape)
+
+from gensim.models import Word2Vec as cus_tkt_W2Vec
+import numpy as cus_tkt_nump
+
+# Word2Vec model
+Cus_tkt_w2v_md = cus_tkt_W2Vec(
+    sentences=cus_Xin_tran,
+    vector_size=200,
+    window=5,
+    min_count=2,
+    workers=4,
+    sg=1
+)
+
+def get_w2v_vector(tokens, model, vector_size):
+    vec = cus_tkt_nump.zeros(vector_size)
+    count = 0
+    for word in tokens:
+        if word in model.wv:
+            vec += model.wv[word]
+            count += 1
+    if count != 0:
+        vec /= count
+    return vec
+
+# Train vectors
+cus_Xin_tran_vecw2v = cus_tkt_nump.array([get_w2v_vector(tokens, Cus_tkt_w2v_md, 200) for tokens in cus_Xin_tran])
+cus_Xin_tst_vecw2v  = cus_tkt_nump.array([get_w2v_vector(tokens, Cus_tkt_w2v_md, 200) for tokens in cus_Xin_tst])
+
+print("Word2Vec train shape:", cus_Xin_tran_vecw2v.shape, "Word2Vec test shape:", cus_Xin_tst_vecw2v.shape)
+
+"""SMOTE"""
+
+from imblearn.over_sampling import SMOTE as Cus_tkt_SMT
+
+# Apply SMOTE on training set
+Cus_tkt_smote = Cus_tkt_SMT(random_state=42)
+cus_Xin_tran_vecw2v_sm, cus_Yin_tran_sm = Cus_tkt_smote.fit_resample(cus_Xin_tran_vecw2v, cus_Yin_tran)
+
+# Before SMOTE – class distribution
+print("Before SMOTE — Train distribution:\n", cus_Yin_tran.value_counts())
+
+# After SMOTE – class distribution
+print("After SMOTE — Train distribution:\n", cus_Yin_tran_sm.value_counts())
+
+"""# **SVM with Various Kernels**"""
+
+import time as cus_tkt_timetakn
+import matplotlib.pyplot as Cus_tkt_plot
+import seaborn as Cus_tkt_seabn
+from sklearn.svm import SVC as Cus_tkt_svm
+from sklearn.model_selection import GridSearchCV as Cus_tkt_gridparam
+from sklearn.metrics import classification_report as Cus_tkt_rp, accuracy_score as cus_tkt_acc, roc_auc_score as Cus_tkt_rocauc, confusion_matrix as Cus_tkt_cmatrix
+
+"""**Linear SVM, RBF SVM and Polynomial SVM**"""
+
+#subset for hyperparameter tuning
+Cus_sub_X = cus_Xin_tran_vecw2v_sm[:2000]
+Cus_sub_y = cus_Yin_tran_sm[:2000]
+
+Cus_tkt_diffsvm_md = {
+    "Linear SVM": {
+        "model": Cus_tkt_svm(kernel='linear', probability=True, random_state=42),
+        "params": {"C": [1, 10]}
+    },
+    "RBF SVM": {
+        "model": Cus_tkt_svm(kernel='rbf', probability=True, random_state=42),
+        "params": {"C": [1, 10], "gamma": ["scale"]}
+    },
+    "Polynomial SVM": {
+        "model": Cus_tkt_svm(kernel='poly', degree=3, probability=True, random_state=42),
+        "params": {"C": [1]}
+    }
+}
+
+for name, config in Cus_tkt_diffsvm_md.items():
+    print(f"\n--- {name} ---")
+
+    # GridSearchCV with 2-fold cross-validation
+    Cus_gd_tkt = Cus_tkt_gridparam(config["model"], config["params"], cv=2, n_jobs=-1, verbose=1)
+
+    Cus_tra_st = cus_tkt_timetakn.time()
+    Cus_gd_tkt.fit(Cus_sub_X, Cus_sub_y)
+    Cus_tra_en = cus_tkt_timetakn.time()
+
+    Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+    best_params = Cus_gd_tkt.best_params_
+
+    print("Best Parameters:", best_params)
+
+    #Training model with best parameters and full training data
+    Cus_final_model = Cus_tkt_svm(
+        kernel=config["model"].kernel,
+        probability=True,
+        random_state=42,
+        **best_params
+    )
+
+    Cus_tra_st_full = cus_tkt_timetakn.time()
+    Cus_final_model.fit(cus_Xin_tran_vecw2v_sm, cus_Yin_tran_sm)
+    Cus_tra_en_full = cus_tkt_timetakn.time()
+    Cus_tra_tm_tkn_full = Cus_tra_en_full - Cus_tra_st_full
+
+    Cus_Ytra_pdt = Cus_final_model.predict(cus_Xin_tran_vecw2v_sm)
+    Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+    print("Training time in sec:", round(Cus_tra_tm_tkn_full, 2))
+    print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+    #Testing
+    Cus_tst_st = cus_tkt_timetakn.time()
+    Cus_Ytst_pdt = Cus_final_model.predict(cus_Xin_tst_vecw2v)
+    Cus_tst_en = cus_tkt_timetakn.time()
+    Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+    print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+    print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+    print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+    # Confusion matrix
+    cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+    Cus_tkt_plot.figure(figsize=(6,5))
+    Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='coolwarm')
+    Cus_tkt_plot.title(f'Confusion Matrix: {name}')
+    Cus_tkt_plot.xlabel('Predicted')
+    Cus_tkt_plot.ylabel('Actual')
+    Cus_tkt_plot.show()
+
+    #AUC score
+    Cus_Y_tkt_prb = Cus_final_model.predict_proba(cus_Xin_tst_vecw2v)
+    au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+    print("AU ROC Score:", round(au_score, 4))
+
+"""# **Multinomial Naive Bayes**"""
+
+from sklearn.naive_bayes import MultinomialNB as Cus_tkt_mnb
+from sklearn.preprocessing import MinMaxScaler as Cus_tkt_mms
+
+Cus_tkt_mnb_model = Cus_tkt_mnb()
+
+Cus_tkt_mnb_param_grid = {
+    "alpha": [0.1, 0.5, 1.0],
+    "fit_prior": [True, False],
+    "class_prior": [None]
+}
+
+Cus_scale_r = Cus_tkt_mms()
+cus_Xin_tran_vecw2v_scaled = Cus_scale_r.fit_transform(cus_Xin_tran_vecw2v_sm)
+cus_Xin_tst_vecw2v_scaled = Cus_scale_r.transform(cus_Xin_tst_vecw2v)
+
+# GridSearch
+Cus_tkt_mnb_grid = Cus_tkt_gridparam(
+    estimator=Cus_tkt_mnb_model,
+    param_grid=Cus_tkt_mnb_param_grid,
+    cv=2,
+    n_jobs=-1,
+    verbose=1
+)
+
+#Training
+Cus_tra_st = cus_tkt_timetakn.time()
+Cus_tkt_mnb_grid.fit(cus_Xin_tran_vecw2v_scaled, cus_Yin_tran_sm)
+Cus_tra_en = cus_tkt_timetakn.time()
+Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+
+Cus_Ytra_pdt = Cus_tkt_mnb_grid.predict(cus_Xin_tran_vecw2v_scaled)
+Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+print("Best Parameters:", Cus_tkt_mnb_grid.best_params_)
+print("Training time in sec:", round(Cus_tra_tm_tkn, 2))
+print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+# Testing
+Cus_tst_st = cus_tkt_timetakn.time()
+Cus_Ytst_pdt = Cus_tkt_mnb_grid.predict(cus_Xin_tst_vecw2v_scaled)
+Cus_tst_en = cus_tkt_timetakn.time()
+
+Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+# Confusion Matrix
+cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+Cus_tkt_plot.figure(figsize=(6,5))
+Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='Oranges')
+Cus_tkt_plot.title("Multinomial NB - Confusion Matrix")
+Cus_tkt_plot.xlabel('Predicted')
+Cus_tkt_plot.ylabel('Actual')
+Cus_tkt_plot.show()
+
+# AUROC
+Cus_Y_tkt_prb = Cus_tkt_mnb_grid.predict_proba(cus_Xin_tst_vecw2v_scaled)
+au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+print("AUC Score:", round(au_score, 4))
+
+"""# **Bernoulli Naive Bayes**"""
+
+from sklearn.naive_bayes import BernoulliNB as Cus_tkt_bnb
+
+Cus_tkt_bnb_model = Cus_tkt_bnb()
+
+Cus_tkt_bnb_param_grid = {
+    "alpha": [0.1, 0.5, 1.0],
+    "binarize": [0.0, 0.5, 1.0],
+    "fit_prior": [True, False]
+}
+
+# GridSearch
+Cus_tkt_bnb_grid = Cus_tkt_gridparam(
+    estimator=Cus_tkt_bnb_model,
+    param_grid=Cus_tkt_bnb_param_grid,
+    cv=2,
+    n_jobs=-1,
+    verbose=1
+)
+
+# Training
+Cus_tra_st = cus_tkt_timetakn.time()
+Cus_tkt_bnb_grid.fit(cus_Xin_tran_vecw2v_sm, cus_Yin_tran_sm)
+Cus_tra_en = cus_tkt_timetakn.time()
+Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+
+Cus_Ytra_pdt = Cus_tkt_bnb_grid.predict(cus_Xin_tran_vecw2v_sm)
+Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+print("Best Parameters:", Cus_tkt_bnb_grid.best_params_)
+print("Training time in sec:", round(Cus_tra_tm_tkn, 2))
+print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+# Testing
+Cus_tst_st = cus_tkt_timetakn.time()
+Cus_Ytst_pdt = Cus_tkt_bnb_grid.predict(cus_Xin_tst_vecw2v)
+Cus_tst_en = cus_tkt_timetakn.time()
+
+Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+# Confusion Matrix
+cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+Cus_tkt_plot.figure(figsize=(6,5))
+Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='Greens')
+Cus_tkt_plot.title("Bernoulli NB - Confusion Matrix")
+Cus_tkt_plot.xlabel('Predicted')
+Cus_tkt_plot.ylabel('Actual')
+Cus_tkt_plot.show()
+
+# AUROC
+Cus_Y_tkt_prb = Cus_tkt_bnb_grid.predict_proba(cus_Xin_tst_vecw2v)
+au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+print("AUC Score:", round(au_score, 4))
+
+________________________________________
+3_BERT embeddings
+
+import pandas as Cus_tkt_pd
+
+Cus_tkt_input_path = "/cus_tkt_cleaned.csv"
+
+Cus_tkt_dframe_final = Cus_tkt_pd.read_csv(Cus_tkt_input_path)
+print("dataframe shape:", Cus_tkt_dframe_final.shape)
+print("Columns:", Cus_tkt_dframe_final.columns.tolist())
+
+print("\nClass distribution:")
+print(Cus_tkt_dframe_final["type"].value_counts())
+
+"""Text Cleaning"""
+
+# Clean spaces
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].str.strip().replace(r'\s+', ' ', regex=True)
+
+import re as Cus_tkt_re
+
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].apply(lambda x: Cus_tkt_re.sub(r'[^a-zA-Z\s]', '', x))
+
+# Lowercase text
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].str.lower()
+
+import nltk
+from nltk.corpus import stopwords
+nltk.download("punkt")
+nltk.download('stopwords')
+nltk.download('punkt_tab')
+from nltk.tokenize import word_tokenize as Cus_tkt_word_tokn
+from nltk.corpus import stopwords as Cus_tkt_stopwords_corpus
+
+# Tokenize
+Cus_tkt_dframe_final["tokens"] = Cus_tkt_dframe_final["text"].apply(Cus_tkt_word_tokn)
+
+stop_words_en = set(stopwords.words('english'))
+
+Cus_tkt_dframe_final["tokens"] = Cus_tkt_dframe_final["tokens"].apply(lambda tokens: [w for w in tokens if w not in stop_words_en])
+
+Cus_tkt_dframe_final
+
+from sklearn.model_selection import train_test_split as cus_tkt_split
+
+# ipnput and output
+cus_X_feat_tkt = Cus_tkt_dframe_final["tokens"]
+cus_Y_out_tkt = Cus_tkt_dframe_final["type"]
+
+# 80% train, 20% test
+cus_Xin_tran, cus_Xin_tst, cus_Yin_tran, cus_Yin_tst = cus_tkt_split(cus_X_feat_tkt, cus_Y_out_tkt, test_size=0.2, random_state=42, stratify=cus_Y_out_tkt)
+print("Train shape:", cus_Xin_tran.shape, "Test shape:", cus_Xin_tst.shape)
+
+from transformers import BertTokenizer as cus_tkt_BTokn, BertModel as cus_tkt_BModel
+import torch as cus_tkt_torch
+import numpy as cus_tkt_nump
+
+# Load BERT base model and tokenizer
+cus_tkt_bert_tokn = cus_tkt_BTokn.from_pretrained('bert-base-uncased')
+cus_tkt_bert_mdl = cus_tkt_BModel.from_pretrained('bert-base-uncased')
+
+# Function to generate BERT embeddings
+def get_bert_vector(tokens, tokenizer, model, max_len=128):
+    # Convert tokens back to text
+    text = " ".join(tokens)
+
+    # Tokenize for BERT
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=max_len
+    )
+
+    # Disable gradients
+    with cus_tkt_torch.no_grad():
+        outputs = model(**inputs)
+
+    # Use CLS token embedding
+    cls_embedding = outputs.last_hidden_state[:, 0, :].squeeze().numpy()
+    return cls_embedding
+
+# Create embeddings
+cus_Xin_tran_vecbert = cus_tkt_nump.array([
+    get_bert_vector(tokens, cus_tkt_bert_tokn, cus_tkt_bert_mdl)
+    for tokens in cus_Xin_tran
+])
+
+cus_Xin_tst_vecbert = cus_tkt_nump.array([
+    get_bert_vector(tokens, cus_tkt_bert_tokn, cus_tkt_bert_mdl)
+    for tokens in cus_Xin_tst
+])
+
+print("Training shape BERT embedded data:", cus_Xin_tran_vecbert.shape,
+      "Testing shape BERT embedded data:", cus_Xin_tst_vecbert.shape)
+
+"""SMOTE"""
+
+from imblearn.over_sampling import SMOTE as Cus_tkt_SMT
+
+# Apply SMOTE on training set
+Cus_tkt_smote = Cus_tkt_SMT(random_state=42)
+cus_Xin_tran_vecbert_sm, cus_Yin_tran_sm = Cus_tkt_smote.fit_resample(cus_Xin_tran_vecbert, cus_Yin_tran)
+
+# Before SMOTE – class distribution
+print("Before SMOTE — Train distribution:\n", cus_Yin_tran.value_counts())
+
+# After SMOTE – class distribution
+print("After SMOTE — Train distribution:\n", cus_Yin_tran_sm.value_counts())
+
+"""# **SVM with Various Kernels**"""
+
+import time as cus_tkt_timetakn
+import matplotlib.pyplot as Cus_tkt_plot
+import seaborn as Cus_tkt_seabn
+from sklearn.svm import SVC as Cus_tkt_svm
+from sklearn.model_selection import GridSearchCV as Cus_tkt_gridparam
+from sklearn.metrics import classification_report as Cus_tkt_rp, accuracy_score as cus_tkt_acc, roc_auc_score as Cus_tkt_rocauc, confusion_matrix as Cus_tkt_cmatrix
+
+"""**Linear SVM, RBF SVM and Polynomial SVM**"""
+
+#subset for hyperparameter tuning
+Cus_sub_X = cus_Xin_tran_vecbert_sm[:2000]
+Cus_sub_y = cus_Yin_tran_sm[:2000]
+
+Cus_tkt_diffsvm_md = {
+    "Linear SVM": {
+        "model": Cus_tkt_svm(kernel='linear', probability=True, random_state=42),
+        "params": {"C": [1, 10]}
+    },
+    "RBF SVM": {
+        "model": Cus_tkt_svm(kernel='rbf', probability=True, random_state=42),
+        "params": {"C": [1, 10], "gamma": ["scale"]}
+    },
+    "Polynomial SVM": {
+        "model": Cus_tkt_svm(kernel='poly', degree=3, probability=True, random_state=42),
+        "params": {"C": [1]}
+    }
+}
+
+for name, config in Cus_tkt_diffsvm_md.items():
+    print(f"\n--- {name} ---")
+
+    # GridSearchCV with 2-fold cross-validation
+    Cus_gd_tkt = Cus_tkt_gridparam(config["model"], config["params"], cv=2, n_jobs=-1, verbose=1)
+
+    Cus_tra_st = cus_tkt_timetakn.time()
+    Cus_gd_tkt.fit(Cus_sub_X, Cus_sub_y)
+    Cus_tra_en = cus_tkt_timetakn.time()
+
+    Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+    best_params = Cus_gd_tkt.best_params_
+
+    print("Best Parameters:", best_params)
+
+    #Training model with best parameters and full training data
+    Cus_final_model = Cus_tkt_svm(
+        kernel=config["model"].kernel,
+        probability=True,
+        random_state=42,
+        **best_params
+    )
+
+    Cus_tra_st_full = cus_tkt_timetakn.time()
+    Cus_final_model.fit(cus_Xin_tran_vecbert_sm, cus_Yin_tran_sm)
+    Cus_tra_en_full = cus_tkt_timetakn.time()
+    Cus_tra_tm_tkn_full = Cus_tra_en_full - Cus_tra_st_full
+
+    Cus_Ytra_pdt = Cus_final_model.predict(cus_Xin_tran_vecbert_sm)
+    Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+    print("Training time in sec:", round(Cus_tra_tm_tkn_full, 2))
+    print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+    #Testing
+    Cus_tst_st = cus_tkt_timetakn.time()
+    Cus_Ytst_pdt = Cus_final_model.predict(cus_Xin_tst_vecbert)
+    Cus_tst_en = cus_tkt_timetakn.time()
+    Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+    print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+    print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+    print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+    # Confusion matrix
+    cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+    Cus_tkt_plot.figure(figsize=(6,5))
+    Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='coolwarm')
+    Cus_tkt_plot.title(f'Confusion Matrix: {name}')
+    Cus_tkt_plot.xlabel('Predicted')
+    Cus_tkt_plot.ylabel('Actual')
+    Cus_tkt_plot.show()
+
+    #AUC score
+    Cus_Y_tkt_prb = Cus_final_model.predict_proba(cus_Xin_tst_vecbert)
+    au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+    print("AU ROC Score:", round(au_score, 4))
+
+"""# **Multinomial Naive Bayes**"""
+
+from sklearn.naive_bayes import MultinomialNB as Cus_tkt_mnb
+from sklearn.preprocessing import MinMaxScaler as Cus_tkt_mms
+
+Cus_tkt_mnb_model = Cus_tkt_mnb()
+
+Cus_tkt_mnb_param_grid = {
+    "alpha": [0.1, 0.5, 1.0],
+    "fit_prior": [True, False],
+    "class_prior": [None]
+}
+
+Cus_scale_r = Cus_tkt_mms()
+cus_Xin_tran_vecw2v_scaled = Cus_scale_r.fit_transform(cus_Xin_tran_vecbert_sm)
+cus_Xin_tst_vecw2v_scaled = Cus_scale_r.transform(cus_Xin_tst_vecbert)
+
+# GridSearch
+Cus_tkt_mnb_grid = Cus_tkt_gridparam(
+    estimator=Cus_tkt_mnb_model,
+    param_grid=Cus_tkt_mnb_param_grid,
+    cv=2,
+    n_jobs=-1,
+    verbose=1
+)
+
+#Training
+Cus_tra_st = cus_tkt_timetakn.time()
+Cus_tkt_mnb_grid.fit(cus_Xin_tran_vecw2v_scaled, cus_Yin_tran_sm)
+Cus_tra_en = cus_tkt_timetakn.time()
+Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+
+Cus_Ytra_pdt = Cus_tkt_mnb_grid.predict(cus_Xin_tran_vecw2v_scaled)
+Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+print("Best Parameters:", Cus_tkt_mnb_grid.best_params_)
+print("Training time in sec:", round(Cus_tra_tm_tkn, 2))
+print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+# Testing
+Cus_tst_st = cus_tkt_timetakn.time()
+Cus_Ytst_pdt = Cus_tkt_mnb_grid.predict(cus_Xin_tst_vecw2v_scaled)
+Cus_tst_en = cus_tkt_timetakn.time()
+
+Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+# Confusion Matrix
+cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+Cus_tkt_plot.figure(figsize=(6,5))
+Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='Oranges')
+Cus_tkt_plot.title("Multinomial NB - Confusion Matrix")
+Cus_tkt_plot.xlabel('Predicted')
+Cus_tkt_plot.ylabel('Actual')
+Cus_tkt_plot.show()
+
+# AUROC
+Cus_Y_tkt_prb = Cus_tkt_mnb_grid.predict_proba(cus_Xin_tst_vecw2v_scaled)
+au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+print("AUC Score:", round(au_score, 4))
+
+"""# **Bernoulli Naive Bayes**"""
+
+from sklearn.naive_bayes import BernoulliNB as Cus_tkt_bnb
+
+Cus_tkt_bnb_model = Cus_tkt_bnb()
+
+Cus_tkt_bnb_param_grid = {
+    "alpha": [0.1, 0.5, 1.0],
+    "binarize": [0.0, 0.5, 1.0],
+    "fit_prior": [True, False]
+}
+
+# GridSearch
+Cus_tkt_bnb_grid = Cus_tkt_gridparam(
+    estimator=Cus_tkt_bnb_model,
+    param_grid=Cus_tkt_bnb_param_grid,
+    cv=2,
+    n_jobs=-1,
+    verbose=1
+)
+
+# Training
+Cus_tra_st = cus_tkt_timetakn.time()
+Cus_tkt_bnb_grid.fit(cus_Xin_tran_vecbert_sm, cus_Yin_tran_sm)
+Cus_tra_en = cus_tkt_timetakn.time()
+Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+
+Cus_Ytra_pdt = Cus_tkt_bnb_grid.predict(cus_Xin_tran_vecbert_sm)
+Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+print("Best Parameters:", Cus_tkt_bnb_grid.best_params_)
+print("Training time in sec:", round(Cus_tra_tm_tkn, 2))
+print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+# Testing
+Cus_tst_st = cus_tkt_timetakn.time()
+Cus_Ytst_pdt = Cus_tkt_bnb_grid.predict(cus_Xin_tst_vecbert)
+Cus_tst_en = cus_tkt_timetakn.time()
+
+Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+# Confusion Matrix
+cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+Cus_tkt_plot.figure(figsize=(6,5))
+Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='Greens')
+Cus_tkt_plot.title("Bernoulli NB - Confusion Matrix")
+Cus_tkt_plot.xlabel('Predicted')
+Cus_tkt_plot.ylabel('Actual')
+Cus_tkt_plot.show()
+
+# AUROC
+Cus_Y_tkt_prb = Cus_tkt_bnb_grid.predict_proba(cus_Xin_tst_vecbert)
+au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+print("AUC Score:", round(au_score, 4))
+
+________________________________________
+
+4_RoBERTa embeddings
+
+import pandas as Cus_tkt_pd
+
+Cus_tkt_input_path = "/cus_tkt_cleaned.csv"
+
+Cus_tkt_dframe_final = Cus_tkt_pd.read_csv(Cus_tkt_input_path)
+print("dataframe shape:", Cus_tkt_dframe_final.shape)
+print("Columns:", Cus_tkt_dframe_final.columns.tolist())
+
+print("\nClass distribution:")
+print(Cus_tkt_dframe_final["type"].value_counts())
+
+"""Text Cleaning"""
+
+# Clean spaces
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].str.strip().replace(r'\s+', ' ', regex=True)
+
+import re as Cus_tkt_re
+
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].apply(lambda x: Cus_tkt_re.sub(r'[^a-zA-Z\s]', '', x))
+
+# Lowercase text
+Cus_tkt_dframe_final["text"] = Cus_tkt_dframe_final["text"].str.lower()
+
+import nltk
+from nltk.corpus import stopwords
+nltk.download("punkt")
+nltk.download('stopwords')
+nltk.download('punkt_tab')
+from nltk.tokenize import word_tokenize as Cus_tkt_word_tokn
+from nltk.corpus import stopwords as Cus_tkt_stopwords_corpus
+
+# Tokenize
+Cus_tkt_dframe_final["tokens"] = Cus_tkt_dframe_final["text"].apply(Cus_tkt_word_tokn)
+
+stop_words_en = set(stopwords.words('english'))
+
+Cus_tkt_dframe_final["tokens"] = Cus_tkt_dframe_final["tokens"].apply(lambda tokens: [w for w in tokens if w not in stop_words_en])
+
+Cus_tkt_dframe_final
+
+from sklearn.model_selection import train_test_split as cus_tkt_split
+
+# ipnput and output
+cus_X_feat_tkt = Cus_tkt_dframe_final["tokens"]
+cus_Y_out_tkt = Cus_tkt_dframe_final["type"]
+
+# 80% train, 20% test
+cus_Xin_tran, cus_Xin_tst, cus_Yin_tran, cus_Yin_tst = cus_tkt_split(cus_X_feat_tkt, cus_Y_out_tkt, test_size=0.2, random_state=42, stratify=cus_Y_out_tkt)
+print("Train shape:", cus_Xin_tran.shape, "Test shape:", cus_Xin_tst.shape)
+
+from transformers import RobertaTokenizer as cus_tkt_RTokn, RobertaModel as cus_tkt_RModel
+import torch as cus_tkt_torch
+import numpy as cus_tkt_nump
+
+# Load RoBERTa base model and tokenizer
+cus_tkt_roberta_tokn = cus_tkt_RTokn.from_pretrained('roberta-base')
+cus_tkt_roberta_mdl = cus_tkt_RModel.from_pretrained('roberta-base')
+
+# Function to generate RoBERTa embeddings
+def get_roberta_vector(tokens, tokenizer, model, max_len=128):
+    # Convert tokens back to text
+    text = " ".join(tokens)
+
+    # Tokenize for RoBERTa
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=max_len
+    )
+
+    # Disable gradients
+    with cus_tkt_torch.no_grad():
+        outputs = model(**inputs)
+
+    # Use CLS-like token embedding (<s> token)
+    cls_embedding = outputs.last_hidden_state[:, 0, :].squeeze().numpy()
+    return cls_embedding
+
+# Create embeddings
+cus_Xin_tran_vecroberta = cus_tkt_nump.array([
+    get_roberta_vector(tokens, cus_tkt_roberta_tokn, cus_tkt_roberta_mdl)
+    for tokens in cus_Xin_tran
+])
+
+cus_Xin_tst_vecroberta = cus_tkt_nump.array([
+    get_roberta_vector(tokens, cus_tkt_roberta_tokn, cus_tkt_roberta_mdl)
+    for tokens in cus_Xin_tst
+])
+
+print("Training shape RoBERTa embedded data:", cus_Xin_tran_vecroberta.shape,
+      "Testing shape RoBERTa embedded data:", cus_Xin_tst_vecroberta.shape)
+
+"""SMOTE"""
+
+from imblearn.over_sampling import SMOTE as Cus_tkt_SMT
+
+# Apply SMOTE on training set
+Cus_tkt_smote = Cus_tkt_SMT(random_state=42)
+cus_Xin_tran_vecroberta_sm, cus_Yin_tran_sm = Cus_tkt_smote.fit_resample(cus_Xin_tran_vecroberta, cus_Yin_tran)
+
+# Before SMOTE – class distribution
+print("Before SMOTE — Train distribution:\n", cus_Yin_tran.value_counts())
+
+# After SMOTE – class distribution
+print("After SMOTE — Train distribution:\n", cus_Yin_tran_sm.value_counts())
+
+"""# **SVM with Various Kernels**"""
+
+import time as cus_tkt_timetakn
+import matplotlib.pyplot as Cus_tkt_plot
+import seaborn as Cus_tkt_seabn
+from sklearn.svm import SVC as Cus_tkt_svm
+from sklearn.model_selection import GridSearchCV as Cus_tkt_gridparam
+from sklearn.metrics import classification_report as Cus_tkt_rp, accuracy_score as cus_tkt_acc, roc_auc_score as Cus_tkt_rocauc, confusion_matrix as Cus_tkt_cmatrix
+
+"""**Linear SVM, RBF SVM and Polynomial SVM**"""
+
+#subset for hyperparameter tuning
+Cus_sub_X = cus_Xin_tran_vecroberta_sm[:2000]
+Cus_sub_y = cus_Yin_tran_sm[:2000]
+
+Cus_tkt_diffsvm_md = {
+    "Linear SVM": {
+        "model": Cus_tkt_svm(kernel='linear', probability=True, random_state=42),
+        "params": {"C": [1, 10]}
+    },
+    "RBF SVM": {
+        "model": Cus_tkt_svm(kernel='rbf', probability=True, random_state=42),
+        "params": {"C": [1, 10], "gamma": ["scale"]}
+    },
+    "Polynomial SVM": {
+        "model": Cus_tkt_svm(kernel='poly', degree=3, probability=True, random_state=42),
+        "params": {"C": [1]}
+    }
+}
+
+for name, config in Cus_tkt_diffsvm_md.items():
+    print(f"\n--- {name} ---")
+
+    # GridSearchCV with 2-fold cross-validation
+    Cus_gd_tkt = Cus_tkt_gridparam(config["model"], config["params"], cv=2, n_jobs=-1, verbose=1)
+
+    Cus_tra_st = cus_tkt_timetakn.time()
+    Cus_gd_tkt.fit(Cus_sub_X, Cus_sub_y)
+    Cus_tra_en = cus_tkt_timetakn.time()
+
+    Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+    best_params = Cus_gd_tkt.best_params_
+
+    print("Best Parameters:", best_params)
+
+    #Training model with best parameters and full training data
+    Cus_final_model = Cus_tkt_svm(
+        kernel=config["model"].kernel,
+        probability=True,
+        random_state=42,
+        **best_params
+    )
+
+    Cus_tra_st_full = cus_tkt_timetakn.time()
+    Cus_final_model.fit(cus_Xin_tran_vecroberta_sm, cus_Yin_tran_sm)
+    Cus_tra_en_full = cus_tkt_timetakn.time()
+    Cus_tra_tm_tkn_full = Cus_tra_en_full - Cus_tra_st_full
+
+    Cus_Ytra_pdt = Cus_final_model.predict(cus_Xin_tran_vecroberta_sm)
+    Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+    print("Training time in sec:", round(Cus_tra_tm_tkn_full, 2))
+    print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+    #Testing
+    Cus_tst_st = cus_tkt_timetakn.time()
+    Cus_Ytst_pdt = Cus_final_model.predict(cus_Xin_tst_vecroberta)
+    Cus_tst_en = cus_tkt_timetakn.time()
+    Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+    print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+    print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+    print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+    # Confusion matrix
+    cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+    Cus_tkt_plot.figure(figsize=(6,5))
+    Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='coolwarm')
+    Cus_tkt_plot.title(f'Confusion Matrix: {name}')
+    Cus_tkt_plot.xlabel('Predicted')
+    Cus_tkt_plot.ylabel('Actual')
+    Cus_tkt_plot.show()
+
+    #AUC score
+    Cus_Y_tkt_prb = Cus_final_model.predict_proba(cus_Xin_tst_vecroberta)
+    au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+    print("AU ROC Score:", round(au_score, 4))
+
+"""# **Multinomial Naive Bayes**"""
+
+from sklearn.naive_bayes import MultinomialNB as Cus_tkt_mnb
+from sklearn.preprocessing import MinMaxScaler as Cus_tkt_mms
+
+Cus_tkt_mnb_model = Cus_tkt_mnb()
+
+Cus_tkt_mnb_param_grid = {
+    "alpha": [0.1, 0.5, 1.0],
+    "fit_prior": [True, False],
+    "class_prior": [None]
+}
+
+Cus_scale_r = Cus_tkt_mms()
+cus_Xin_tran_vecw2v_scaled = Cus_scale_r.fit_transform(cus_Xin_tran_vecroberta_sm)
+cus_Xin_tst_vecw2v_scaled = Cus_scale_r.transform(cus_Xin_tst_vecroberta)
+
+# GridSearch
+Cus_tkt_mnb_grid = Cus_tkt_gridparam(
+    estimator=Cus_tkt_mnb_model,
+    param_grid=Cus_tkt_mnb_param_grid,
+    cv=2,
+    n_jobs=-1,
+    verbose=1
+)
+
+#Training
+Cus_tra_st = cus_tkt_timetakn.time()
+Cus_tkt_mnb_grid.fit(cus_Xin_tran_vecw2v_scaled, cus_Yin_tran_sm)
+Cus_tra_en = cus_tkt_timetakn.time()
+Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+
+Cus_Ytra_pdt = Cus_tkt_mnb_grid.predict(cus_Xin_tran_vecw2v_scaled)
+Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+print("Best Parameters:", Cus_tkt_mnb_grid.best_params_)
+print("Training time in sec:", round(Cus_tra_tm_tkn, 2))
+print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+# Testing
+Cus_tst_st = cus_tkt_timetakn.time()
+Cus_Ytst_pdt = Cus_tkt_mnb_grid.predict(cus_Xin_tst_vecw2v_scaled)
+Cus_tst_en = cus_tkt_timetakn.time()
+
+Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+# Confusion Matrix
+cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+Cus_tkt_plot.figure(figsize=(6,5))
+Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='Oranges')
+Cus_tkt_plot.title("Multinomial NB - Confusion Matrix")
+Cus_tkt_plot.xlabel('Predicted')
+Cus_tkt_plot.ylabel('Actual')
+Cus_tkt_plot.show()
+
+# AUROC
+Cus_Y_tkt_prb = Cus_tkt_mnb_grid.predict_proba(cus_Xin_tst_vecw2v_scaled)
+au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+print("AUC Score:", round(au_score, 4))
+
+"""# **Bernoulli Naive Bayes**"""
+
+from sklearn.naive_bayes import BernoulliNB as Cus_tkt_bnb
+
+Cus_tkt_bnb_model = Cus_tkt_bnb()
+
+Cus_tkt_bnb_param_grid = {
+    "alpha": [0.1, 0.5, 1.0],
+    "binarize": [0.0, 0.5, 1.0],
+    "fit_prior": [True, False]
+}
+
+# GridSearch
+Cus_tkt_bnb_grid = Cus_tkt_gridparam(
+    estimator=Cus_tkt_bnb_model,
+    param_grid=Cus_tkt_bnb_param_grid,
+    cv=2,
+    n_jobs=-1,
+    verbose=1
+)
+
+# Training
+Cus_tra_st = cus_tkt_timetakn.time()
+Cus_tkt_bnb_grid.fit(cus_Xin_tran_vecroberta_sm, cus_Yin_tran_sm)
+Cus_tra_en = cus_tkt_timetakn.time()
+Cus_tra_tm_tkn = Cus_tra_en - Cus_tra_st
+
+Cus_Ytra_pdt = Cus_tkt_bnb_grid.predict(cus_Xin_tran_vecroberta_sm)
+Cus_tra_accuracy = cus_tkt_acc(cus_Yin_tran_sm, Cus_Ytra_pdt)
+
+print("Best Parameters:", Cus_tkt_bnb_grid.best_params_)
+print("Training time in sec:", round(Cus_tra_tm_tkn, 2))
+print("Training Accuracy:", round(Cus_tra_accuracy, 4))
+
+# Testing
+Cus_tst_st = cus_tkt_timetakn.time()
+Cus_Ytst_pdt = Cus_tkt_bnb_grid.predict(cus_Xin_tst_vecroberta)
+Cus_tst_en = cus_tkt_timetakn.time()
+
+Cus_tst_tm_tkn = Cus_tst_en - Cus_tst_st
+
+print("Testing Accuracy:", round(cus_tkt_acc(cus_Yin_tst, Cus_Ytst_pdt), 4))
+print("Testing time in sec:", round(Cus_tst_tm_tkn, 2))
+print("\nTesting prediction metrics:\n", Cus_tkt_rp(cus_Yin_tst, Cus_Ytst_pdt))
+
+# Confusion Matrix
+cm_tkt_matrix = Cus_tkt_cmatrix(cus_Yin_tst, Cus_Ytst_pdt)
+Cus_tkt_plot.figure(figsize=(6,5))
+Cus_tkt_seabn.heatmap(cm_tkt_matrix, annot=True, fmt='d', cmap='Greens')
+Cus_tkt_plot.title("Bernoulli NB - Confusion Matrix")
+Cus_tkt_plot.xlabel('Predicted')
+Cus_tkt_plot.ylabel('Actual')
+Cus_tkt_plot.show()
+
+# AUROC
+Cus_Y_tkt_prb = Cus_tkt_bnb_grid.predict_proba(cus_Xin_tst_vecroberta)
+au_score = Cus_tkt_rocauc(cus_Yin_tst, Cus_Y_tkt_prb, multi_class='ovr')
+print("AUC Score:", round(au_score, 4))
